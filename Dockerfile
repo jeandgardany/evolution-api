@@ -27,14 +27,14 @@ RUN chmod +x ./Docker/scripts/* && dos2unix ./Docker/scripts/*
 
 RUN ./Docker/scripts/generate_database.sh
 
-RUN npm run build
+RUN ./node_modules/.bin/tsup
 
 FROM node:20-alpine AS final
 
 RUN apk update && \
-    apk add tzdata ffmpeg bash
+    apk add tzdata ffmpeg bash openssl openssl-dev libc6-compat
 
-ENV TZ=America/Sao_Paulo
+ENV TZ=America/Fortaleza
 
 WORKDIR /evolution
 

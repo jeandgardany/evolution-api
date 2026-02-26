@@ -1,7 +1,9 @@
 services:
   api:
     container_name: evolution_api
-    image: atendai/evolution-api:homolog
+    build:
+      context: .
+      dockerfile: Dockerfile
     restart: always
     depends_on:
       - redis
@@ -28,6 +30,7 @@ services:
       - evolution_redis:/data
     ports:
       - 6379:6379
+    restart: always
 
   postgres:
     container_name: postgres
@@ -39,7 +42,7 @@ services:
     ports:
       - 5432:5432
     environment:
-      - POSTGRES_PASSWORD=PASSWORD
+      - POSTGRES_PASSWORD=090271jd
     volumes:
       - postgres_data:/var/lib/postgresql/data
     expose:

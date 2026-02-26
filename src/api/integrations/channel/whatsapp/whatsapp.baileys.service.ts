@@ -397,6 +397,14 @@ export class BaileysStartupService extends ChannelStartupService {
 
     if (connection === 'close') {
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+
+      // Guard: if connection closed before QR was scanned (no wuid, no error code), do not reconnect
+      // Without this guard, a premature close triggers infinite QR regeneration loop
+      if (!this.instance.wuid && !statusCode) {
+        this.logger.info('Connection closed before QR scan — skipping reconnect to prevent loop');
+        return;
+      }
+
       const codesToNotReconnect = [DisconnectReason.loggedOut, DisconnectReason.forbidden, 402, 406];
       const shouldReconnect = !codesToNotReconnect.includes(statusCode);
       if (shouldReconnect) {
@@ -1130,6 +1138,11 @@ export class BaileysStartupService extends ChannelStartupService {
             received.messageTimestamp = received.messageTimestamp?.toNumber();
           }
 
+          // Resolve @lid to @s.whatsapp.net so all downstream uses (prepareMessage, chatbot, contact) get the correct JID
+          if (received.key.remoteJid?.includes('@lid') && (received.key as any)?.remoteJidAlt) {
+            received.key.remoteJid = (received.key as any).remoteJidAlt;
+          }
+
           if (settings?.groupsIgnore && received.key.remoteJid.includes('@g.us')) {
             continue;
           }
@@ -1408,15 +1421,20 @@ export class BaileysStartupService extends ChannelStartupService {
             continue;
           }
 
+          // Resolve @lid to @s.whatsapp.net using the stored message key as source of truth
+          const resolvedRemoteJid: string = key.remoteJid?.includes('@lid')
+            ? ((key as any)?.remoteJidAlt ?? (findMessage.key as any)?.remoteJid ?? key.remoteJid)
+            : key.remoteJid;
+
           if (update.message === null && update.status === undefined) {
             this.sendDataWebhook(Events.MESSAGES_DELETE, key);
 
             const message: any = {
               messageId: findMessage.id,
               keyId: key.id,
-              remoteJid: key.remoteJid,
+              remoteJid: resolvedRemoteJid,
               fromMe: key.fromMe,
-              participant: key?.remoteJid,
+              participant: resolvedRemoteJid,
               status: 'DELETED',
               instanceId: this.instanceId,
             };
@@ -1436,12 +1454,12 @@ export class BaileysStartupService extends ChannelStartupService {
 
             continue;
           } else if (update.status !== undefined && status[update.status] !== findMessage.status) {
-            if (!key.fromMe && key.remoteJid) {
-              readChatToUpdate[key.remoteJid] = true;
+            if (!key.fromMe && resolvedRemoteJid) {
+              readChatToUpdate[resolvedRemoteJid] = true;
 
               if (status[update.status] === status[4]) {
-                this.logger.log(`Update as read ${key.remoteJid} - ${findMessage.messageTimestamp}`);
-                this.updateMessagesReadedByTimestamp(key.remoteJid, findMessage.messageTimestamp);
+                this.logger.log(`Update as read ${resolvedRemoteJid} - ${findMessage.messageTimestamp}`);
+                this.updateMessagesReadedByTimestamp(resolvedRemoteJid, findMessage.messageTimestamp);
               }
             }
 
@@ -1454,9 +1472,9 @@ export class BaileysStartupService extends ChannelStartupService {
           const message: any = {
             messageId: findMessage.id,
             keyId: key.id,
-            remoteJid: key.remoteJid,
+            remoteJid: resolvedRemoteJid,
             fromMe: key.fromMe,
-            participant: key?.remoteJid,
+            participant: resolvedRemoteJid,
             status: status[update.status],
             pollUpdates,
             instanceId: this.instanceId,
