@@ -782,7 +782,9 @@ export class BaileysStartupService extends ChannelStartupService {
     'contacts.upsert': async (contacts: Contact[]) => {
       try {
         const contactsRaw: any = contacts.map((contact) => ({
-          remoteJid: contact.id,
+          remoteJid: contact.id.includes('@lid') && (contact as any)?.lidJidAlt
+            ? (contact as any).lidJidAlt
+            : contact.id,
           pushName: contact?.name || contact?.verifiedName || contact.id.split('@')[0],
           profilePicUrl: null,
           instanceId: this.instanceId,
@@ -821,7 +823,9 @@ export class BaileysStartupService extends ChannelStartupService {
 
         const updatedContacts = await Promise.all(
           contacts.map(async (contact) => ({
-            remoteJid: contact.id,
+            remoteJid: contact.id.includes('@lid') && (contact as any)?.lidJidAlt
+              ? (contact as any).lidJidAlt
+              : contact.id,
             pushName: contact?.name || contact?.verifiedName || contact.id.split('@')[0],
             profilePicUrl: (await this.profilePicture(contact.id)).profilePictureUrl,
             instanceId: this.instanceId,
@@ -1671,7 +1675,11 @@ export class BaileysStartupService extends ChannelStartupService {
 
           for (const event of payload) {
             if (typeof event.key.remoteJid === 'string' && typeof event.receipt.readTimestamp === 'number') {
-              remotesJidMap[event.key.remoteJid] = event.receipt.readTimestamp;
+              // Resolve @lid to @s.whatsapp.net so read receipts match stored messages
+              const jid = event.key.remoteJid.includes('@lid') && (event.key as any)?.remoteJidAlt
+                ? (event.key as any).remoteJidAlt
+                : event.key.remoteJid;
+              remotesJidMap[jid] = event.receipt.readTimestamp;
             }
           }
 
