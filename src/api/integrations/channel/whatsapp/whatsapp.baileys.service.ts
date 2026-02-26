@@ -162,6 +162,18 @@ export interface ExtendedIMessageKey extends proto.IMessageKey {
   isViewOnce?: boolean;
 }
 
+export interface IMessageRaw {
+  key: ExtendedIMessageKey;
+  pushName?: string;
+  status?: string;
+  message: any;
+  contextInfo?: any;
+  messageType: string;
+  messageTimestamp: number;
+  instanceId: string;
+  source: string;
+}
+
 const groupMetadataCache = new CacheService(new CacheEngine(configService, 'groups').getEngine());
 
 // Adicione a função getVideoDuration no início do arquivo
@@ -1234,22 +1246,23 @@ export class BaileysStartupService extends ChannelStartupService {
               }
 
               if (pollVote.encPayload && pollEncKey) {
+                const pollKey = pollMessage.key as ExtendedIMessageKey;
                 const creatorCandidates = [
                   this.instance.wuid,
                   this.client.user?.lid,
-                  pollMessage.key.participant,
-                  (pollMessage.key as any).participantAlt,
-                  pollMessage.key.remoteJid,
+                  pollKey.participant,
+                  pollKey.participantAlt,
+                  pollKey.remoteJid,
                 ];
 
-                const key = received.key as any;
+                const receivedKey = received.key as ExtendedIMessageKey;
                 const voterCandidates = [
                   this.instance.wuid,
                   this.client.user?.lid,
-                  key.participant,
-                  key.participantAlt,
-                  key.remoteJidAlt,
-                  key.remoteJid,
+                  receivedKey.participant,
+                  receivedKey.participantAlt,
+                  receivedKey.remoteJidAlt,
+                  receivedKey.remoteJid,
                 ];
 
                 const uniqueCreators = [
@@ -4649,7 +4662,7 @@ export class BaileysStartupService extends ChannelStartupService {
     return obj;
   }
 
-  private prepareMessage(message: proto.IWebMessageInfo): any {
+  private prepareMessage(message: proto.IWebMessageInfo): IMessageRaw {
     const contentType = getContentType(message.message);
     const contentMsg = message?.message[contentType] as any;
 
