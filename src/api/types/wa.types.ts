@@ -1,6 +1,20 @@
 /* eslint-disable @typescript-eslint/no-namespace */
 import { JsonValue } from '@prisma/client/runtime/library';
-import { AuthenticationState, WAConnectionState } from 'baileys';
+import { AuthenticationState, Contact, proto, WAConnectionState } from 'baileys';
+
+/**
+ * LID (Linked Identity Device) extensions for Baileys types.
+ * The EvolutionAPI Baileys fork adds `remoteJidAlt` to message keys and
+ * `lidJidAlt` to contacts when the original JID uses the @lid suffix.
+ * These interfaces provide type-safe access to those fields.
+ */
+export interface LidMessageKey extends proto.IMessageKey {
+  remoteJidAlt?: string;
+}
+
+export interface LidContact extends Contact {
+  lidJidAlt?: string;
+}
 
 export enum Events {
   APPLICATION_STARTUP = 'application.startup',
@@ -129,6 +143,20 @@ export declare namespace wa {
   };
 
   export type StatusMessage = 'ERROR' | 'PENDING' | 'SERVER_ACK' | 'DELIVERY_ACK' | 'READ' | 'DELETED' | 'PLAYED';
+}
+
+/** Resolve a @lid JID to its @s.whatsapp.net alternative when available. */
+export function resolveLidJid(key: LidMessageKey): string {
+  return key.remoteJid?.includes('@lid') && key.remoteJidAlt
+    ? key.remoteJidAlt
+    : key.remoteJid;
+}
+
+/** Resolve a @lid contact ID to its @s.whatsapp.net alternative when available. */
+export function resolveLidContact(contact: LidContact): string {
+  return contact.id?.includes('@lid') && contact.lidJidAlt
+    ? contact.lidJidAlt
+    : contact.id;
 }
 
 export const TypeMediaMessage = ['imageMessage', 'documentMessage', 'audioMessage', 'videoMessage', 'stickerMessage', 'ptvMessage'];

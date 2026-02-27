@@ -58,7 +58,7 @@ import { PrismaRepository } from '@api/repository/repository.service';
 import { chatbotController, waMonitor } from '@api/server.module';
 import { CacheService } from '@api/services/cache.service';
 import { ChannelStartupService } from '@api/services/channel.service';
-import { Events, MessageSubtype, TypeMediaMessage, wa } from '@api/types/wa.types';
+import { Events, LidContact, LidMessageKey, MessageSubtype, resolveLidContact, resolveLidJid, TypeMediaMessage, wa } from '@api/types/wa.types';
 import { CacheEngine } from '@cache/cacheengine';
 import {
   CacheConf,
@@ -779,12 +779,10 @@ export class BaileysStartupService extends ChannelStartupService {
   };
 
   private readonly contactHandle = {
-    'contacts.upsert': async (contacts: Contact[]) => {
+    'contacts.upsert': async (contacts: LidContact[]) => {
       try {
         const contactsRaw: any = contacts.map((contact) => ({
-          remoteJid: contact.id.includes('@lid') && (contact as any)?.lidJidAlt
-            ? (contact as any).lidJidAlt
-            : contact.id,
+          remoteJid: resolveLidContact(contact),
           pushName: contact?.name || contact?.verifiedName || contact.id.split('@')[0],
           profilePicUrl: null,
           instanceId: this.instanceId,
@@ -822,10 +820,8 @@ export class BaileysStartupService extends ChannelStartupService {
         }
 
         const updatedContacts = await Promise.all(
-          contacts.map(async (contact) => ({
-            remoteJid: contact.id.includes('@lid') && (contact as any)?.lidJidAlt
-              ? (contact as any).lidJidAlt
-              : contact.id,
+          contacts.map(async (contact: LidContact) => ({
+            remoteJid: resolveLidContact(contact),
             pushName: contact?.name || contact?.verifiedName || contact.id.split('@')[0],
             profilePicUrl: (await this.profilePicture(contact.id)).profilePictureUrl,
             instanceId: this.instanceId,
@@ -1143,8 +1139,8 @@ export class BaileysStartupService extends ChannelStartupService {
           }
 
           // Resolve @lid to @s.whatsapp.net so all downstream uses (prepareMessage, chatbot, contact) get the correct JID
-          if (received.key.remoteJid?.includes('@lid') && (received.key as any)?.remoteJidAlt) {
-            received.key.remoteJid = (received.key as any).remoteJidAlt;
+          if (received.key.remoteJid?.includes('@lid') && (received.key as LidMessageKey)?.remoteJidAlt) {
+            received.key.remoteJid = (received.key as LidMessageKey).remoteJidAlt;
           }
 
           if (settings?.groupsIgnore && received.key.remoteJid.includes('@g.us')) {
@@ -1426,8 +1422,9 @@ export class BaileysStartupService extends ChannelStartupService {
           }
 
           // Resolve @lid to @s.whatsapp.net using the stored message key as source of truth
+          const lidKey = key as LidMessageKey;
           const resolvedRemoteJid: string = key.remoteJid?.includes('@lid')
-            ? ((key as any)?.remoteJidAlt ?? (findMessage.key as any)?.remoteJid ?? key.remoteJid)
+            ? (lidKey.remoteJidAlt ?? (findMessage.key as LidMessageKey)?.remoteJid ?? key.remoteJid)
             : key.remoteJid;
 
           if (update.message === null && update.status === undefined) {
@@ -1676,9 +1673,7 @@ export class BaileysStartupService extends ChannelStartupService {
           for (const event of payload) {
             if (typeof event.key.remoteJid === 'string' && typeof event.receipt.readTimestamp === 'number') {
               // Resolve @lid to @s.whatsapp.net so read receipts match stored messages
-              const jid = event.key.remoteJid.includes('@lid') && (event.key as any)?.remoteJidAlt
-                ? (event.key as any).remoteJidAlt
-                : event.key.remoteJid;
+              const jid = resolveLidJid(event.key as LidMessageKey);
               remotesJidMap[jid] = event.receipt.readTimestamp;
             }
           }
