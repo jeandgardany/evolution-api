@@ -77,6 +77,7 @@ import { BadRequestException, InternalServerErrorException, NotFoundException } 
 import ffmpegPath from '@ffmpeg-installer/ffmpeg';
 import { Boom } from '@hapi/boom';
 import { Instance } from '@prisma/client';
+import { createJid } from '@utils/createJid';
 import { makeProxyAgent } from '@utils/makeProxyAgent';
 import { getOnWhatsappCache, saveOnWhatsappCache } from '@utils/onWhatsappCache';
 import { status } from '@utils/renderStatus';
@@ -1148,21 +1149,27 @@ export class BaileysStartupService extends ChannelStartupService {
           }
           const existingChat = await this.prismaRepository.chat.findFirst({
             where: { instanceId: this.instanceId, remoteJid: received.key.remoteJid },
+            select: { id: true, name: true },
           });
 
-          if (existingChat) {
-            const chatToInsert = {
-              remoteJid: received.key.remoteJid,
-              instanceId: this.instanceId,
-              name: received.pushName || '',
-              unreadMessages: 0,
-            };
-
-            this.sendDataWebhook(Events.CHATS_UPSERT, [chatToInsert]);
+          if (
+            existingChat &&
+            received.pushName &&
+            existingChat.name !== received.pushName &&
+            received.pushName.trim().length > 0 &&
+            !received.key.fromMe &&
+            !received.key.remoteJid.includes('@g.us')
+          ) {
+            this.sendDataWebhook(Events.CHATS_UPSERT, [{ ...existingChat, name: received.pushName }]);
             if (this.configService.get<Database>('DATABASE').SAVE_DATA.CHATS) {
-              await this.prismaRepository.chat.create({
-                data: chatToInsert,
-              });
+              try {
+                await this.prismaRepository.chat.update({
+                  where: { id: existingChat.id },
+                  data: { name: received.pushName },
+                });
+              } catch {
+                console.log(`Chat insert record ignored: ${received.key.remoteJid} - ${this.instanceId}`);
+              }
             }
           }
 
@@ -1783,7 +1790,7 @@ export class BaileysStartupService extends ChannelStartupService {
   }
 
   public async profilePicture(number: string) {
-    const jid = this.createJid(number);
+    const jid = createJid(number);
 
     try {
       const profilePictureUrl = await this.client.profilePictureUrl(jid, 'image');
@@ -1801,7 +1808,7 @@ export class BaileysStartupService extends ChannelStartupService {
   }
 
   public async getStatus(number: string) {
-    const jid = this.createJid(number);
+    const jid = createJid(number);
 
     try {
       return {
@@ -1817,7 +1824,7 @@ export class BaileysStartupService extends ChannelStartupService {
   }
 
   public async fetchProfile(instanceName: string, number?: string) {
-    const jid = number ? this.createJid(number) : this.client?.user?.id;
+    const jid = number ? createJid(number) : this.client?.user?.id;
 
     const onWhatsapp = (await this.whatsappNumber({ numbers: [jid] }))?.shift();
 
@@ -1873,7 +1880,7 @@ export class BaileysStartupService extends ChannelStartupService {
   }
 
   public async offerCall({ number, isVideo, callDuration }: OfferCallDto) {
-    const jid = this.createJid(number);
+    const jid = createJid(number);
 
     try {
       const call = await this.client.offerCall(jid, isVideo);
@@ -2144,7 +2151,7 @@ export class BaileysStartupService extends ChannelStartupService {
           mentions = group.participants.map((participant) => participant.id);
         } else if (options.mentioned?.length) {
           mentions = options.mentioned.map((mention) => {
-            const jid = this.createJid(mention);
+            const jid = createJid(mention);
             if (isJidGroup(jid)) {
               return null;
             }
@@ -3214,7 +3221,7 @@ export class BaileysStartupService extends ChannelStartupService {
       }
 
       if (!contact.wuid) {
-        contact.wuid = this.createJid(contact.phoneNumber);
+        contact.wuid = createJid(contact.phoneNumber);
       }
 
       result += `item1.TEL;waid=${contact.wuid}:${contact.phoneNumber}\n` + 'item1.X-ABLabel:Celular\n' + 'END:VCARD';
@@ -3264,7 +3271,7 @@ export class BaileysStartupService extends ChannelStartupService {
     };
 
     data.numbers.forEach((number) => {
-      const jid = this.createJid(number);
+      const jid = createJid(number);
 
       if (isJidGroup(jid)) {
         jids.groups.push({ number, jid });
@@ -3457,7 +3464,7 @@ export class BaileysStartupService extends ChannelStartupService {
           archive: data.archive,
           lastMessages: [last_message],
         },
-        this.createJid(number),
+        createJid(number),
       );
 
       return {
@@ -3494,7 +3501,7 @@ export class BaileysStartupService extends ChannelStartupService {
           markRead: false,
           lastMessages: [last_message],
         },
-        this.createJid(number),
+        createJid(number),
       );
 
       return {
@@ -3699,7 +3706,7 @@ export class BaileysStartupService extends ChannelStartupService {
 
   public async fetchBusinessProfile(number: string): Promise<NumberBusiness> {
     try {
-      const jid = number ? this.createJid(number) : this.instance.wuid;
+      const jid = number ? createJid(number) : this.instance.wuid;
 
       const profile = await this.client.getBusinessProfile(jid);
 
@@ -3847,7 +3854,7 @@ export class BaileysStartupService extends ChannelStartupService {
   }
 
   public async updateMessage(data: UpdateMessageDto) {
-    const jid = this.createJid(data.number);
+    const jid = createJid(data.number);
 
     const options = await this.formatUpdateMessage(data);
 
@@ -4135,7 +4142,7 @@ export class BaileysStartupService extends ChannelStartupService {
 
       const inviteUrl = inviteCode.inviteUrl;
 
-      const numbers = id.numbers.map((number) => this.createJid(number));
+      const numbers = id.numbers.map((number) => createJid(number));
       const description = id.description ?? '';
 
       const msg = `${description}\n\n${inviteUrl}`;
@@ -4206,7 +4213,7 @@ export class BaileysStartupService extends ChannelStartupService {
 
   public async updateGParticipant(update: GroupUpdateParticipantDto) {
     try {
-      const participants = update.participants.map((p) => this.createJid(p));
+      const participants = update.participants.map((p) => createJid(p));
       const updateParticipants = await this.client.groupParticipantsUpdate(
         update.groupJid,
         participants,
