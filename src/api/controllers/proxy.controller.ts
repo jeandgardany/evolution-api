@@ -10,7 +10,10 @@ import axios from 'axios';
 const logger = new Logger('ProxyController');
 
 export class ProxyController {
-  constructor(private readonly proxyService: ProxyService, private readonly waMonitor: WAMonitoringService) {}
+  constructor(
+    private readonly proxyService: ProxyService,
+    private readonly waMonitor: WAMonitoringService,
+  ) {}
 
   public async createProxy(instance: InstanceDto, data: ProxyDto) {
     if (!this.waMonitor.waInstances[instance.instanceName]) {
@@ -50,15 +53,21 @@ export class ProxyController {
         httpsAgent: makeProxyAgent(proxy),
       });
 
-      return response?.data !== serverIp?.data;
-    } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.data) {
-        logger.error('testProxy error: ' + error.response.data);
-      } else if (axios.isAxiosError(error)) {
-        logger.error('testProxy error: ');
+      const result = response?.data !== serverIp?.data;
+      if (result) {
+        logger.info('testProxy: proxy connection successful');
       } else {
-        logger.error('testProxy error: ');
+        logger.warn("testProxy: proxy connection doesn't change the origin IP");
       }
+
+      return result;
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        logger.error('testProxy error: axios error: ' + error.message);
+      } else {
+        logger.error('testProxy error: unexpected error: ' + error);
+      }
+
       return false;
     }
   }

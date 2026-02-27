@@ -7,7 +7,7 @@ import { CacheConf, Chatwoot, ConfigService, Database, DelInstance, ProviderSess
 import { Logger } from '@config/logger.config';
 import { INSTANCE_DIR, STORE_DIR } from '@config/path.config';
 import { NotFoundException } from '@exceptions';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import EventEmitter2 from 'eventemitter2';
 import { rmSync } from 'fs';
 import { join } from 'path';
@@ -29,6 +29,8 @@ export class WAMonitoringService {
 
     Object.assign(this.db, configService.get<Database>('DATABASE'));
     Object.assign(this.redis, configService.get<CacheConf>('CACHE'));
+
+    (this as any).providerSession = Object.freeze(configService.get<ProviderSession>('PROVIDER'));
   }
 
   private readonly db: Partial<Database> = {};
@@ -36,26 +38,48 @@ export class WAMonitoringService {
 
   private readonly logger = new Logger('WAMonitoringService');
   public readonly waInstances: Record<string, any> = {};
+  private readonly delInstanceTimeouts: Record<string, NodeJS.Timeout> = {};
 
-  private readonly providerSession = Object.freeze(this.configService.get<ProviderSession>('PROVIDER'));
+  private readonly providerSession: ProviderSession;
 
   public delInstanceTime(instance: string) {
     const time = this.configService.get<DelInstance>('DEL_INSTANCE');
     if (typeof time === 'number' && time > 0) {
-      setTimeout(async () => {
-        if (this.waInstances[instance]?.connectionStatus?.state !== 'open') {
-          if (this.waInstances[instance]?.connectionStatus?.state === 'connecting') {
-            if ((await this.waInstances[instance].integration) === Integration.WHATSAPP_BAILEYS) {
-              await this.waInstances[instance]?.client?.logout('Log out instance: ' + instance);
-              this.waInstances[instance]?.client?.ws?.close();
-              this.waInstances[instance]?.client?.end(undefined);
+      // Clear previous timeout if exists
+      if (this.delInstanceTimeouts[instance]) {
+        clearTimeout(this.delInstanceTimeouts[instance]);
+      }
+
+      // Set new timeout and store reference
+      this.delInstanceTimeouts[instance] = setTimeout(
+        async () => {
+          try {
+            if (this.waInstances[instance]?.connectionStatus?.state !== 'open') {
+              if (this.waInstances[instance]?.connectionStatus?.state === 'connecting') {
+                if ((await this.waInstances[instance].integration) === Integration.WHATSAPP_BAILEYS) {
+                  await this.waInstances[instance]?.client?.logout('Log out instance: ' + instance);
+                  this.waInstances[instance]?.client?.ws?.close();
+                  this.waInstances[instance]?.client?.end(undefined);
+                }
+                this.eventEmitter.emit('remove.instance', instance, 'inner');
+              } else {
+                this.eventEmitter.emit('remove.instance', instance, 'inner');
+              }
             }
-            this.eventEmitter.emit('remove.instance', instance, 'inner');
-          } else {
-            this.eventEmitter.emit('remove.instance', instance, 'inner');
+          } finally {
+            // Clean up timeout reference
+            delete this.delInstanceTimeouts[instance];
           }
-        }
-      }, 1000 * 60 * time);
+        },
+        1000 * 60 * time,
+      );
+    }
+  }
+
+  public clearDelInstanceTime(instance: string) {
+    if (this.delInstanceTimeouts[instance]) {
+      clearTimeout(this.delInstanceTimeouts[instance]);
+      delete this.delInstanceTimeouts[instance];
     }
   }
 
@@ -72,14 +96,15 @@ export class WAMonitoringService {
 
     const clientName = this.configService.get<Database>('DATABASE').CONNECTION.CLIENT_NAME;
 
-    const where = instanceNames && instanceNames.length > 0
-      ? {
-        name: {
-          in: instanceNames,
-        },
-        clientName,
-      }
-      : { clientName };
+    const where =
+      instanceNames && instanceNames.length > 0
+        ? {
+            name: {
+              in: instanceNames,
+            },
+            clientName,
+          }
+        : { clientName };
 
     const instances = await this.prismaRepository.instance.findMany({
       where,
@@ -87,6 +112,7 @@ export class WAMonitoringService {
         Chatwoot: true,
         Proxy: true,
         Rabbitmq: true,
+        Nats: true,
         Sqs: true,
         Websocket: true,
         Setting: true,
@@ -164,7 +190,8 @@ export class WAMonitoringService {
 
   public async cleaningStoreData(instanceName: string) {
     if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED) {
-      execSync(`rm -rf ${join(STORE_DIR, 'chatwoot', instanceName + '*')}`);
+      const instancePath = join(STORE_DIR, 'chatwoot', instanceName);
+      execFileSync('rm', ['-rf', instancePath]);
     }
 
     const instance = await this.prismaRepository.instance.findFirst({
@@ -186,6 +213,7 @@ export class WAMonitoringService {
     await this.prismaRepository.chatwoot.deleteMany({ where: { instanceId: instance.id } });
     await this.prismaRepository.proxy.deleteMany({ where: { instanceId: instance.id } });
     await this.prismaRepository.rabbitmq.deleteMany({ where: { instanceId: instance.id } });
+    await this.prismaRepository.nats.deleteMany({ where: { instanceId: instance.id } });
     await this.prismaRepository.sqs.deleteMany({ where: { instanceId: instance.id } });
     await this.prismaRepository.integrationSession.deleteMany({ where: { instanceId: instance.id } });
     await this.prismaRepository.typebot.deleteMany({ where: { instanceId: instance.id } });
@@ -217,8 +245,11 @@ export class WAMonitoringService {
         data: {
           id: data.instanceId,
           name: data.instanceName,
+          ownerJid: data.ownerJid,
+          profileName: data.profileName,
+          profilePicUrl: data.profilePicUrl,
           connectionStatus:
-            data.integration && data.integration === Integration.WHATSAPP_BAILEYS ? 'close' : data.status ?? 'open',
+            data.integration && data.integration === Integration.WHATSAPP_BAILEYS ? 'close' : (data.status ?? 'open'),
           number: data.number,
           integration: data.integration || Integration.WHATSAPP_BAILEYS,
           token: data.hash,
@@ -259,9 +290,19 @@ export class WAMonitoringService {
       token: instanceData.token,
       number: instanceData.number,
       businessId: instanceData.businessId,
+      ownerJid: instanceData.ownerJid,
     });
 
-    await instance.connectToWhatsapp();
+    if (instanceData.connectionStatus === 'open' || instanceData.connectionStatus === 'connecting') {
+      this.logger.info(
+        `Auto-connecting instance "${instanceData.instanceName}" (status: ${instanceData.connectionStatus})`,
+      );
+      await instance.connectToWhatsapp();
+    } else {
+      this.logger.info(
+        `Skipping auto-connect for instance "${instanceData.instanceName}" (status: ${instanceData.connectionStatus || 'close'})`,
+      );
+    }
 
     this.waInstances[instanceData.instanceName] = instance;
   }
@@ -287,6 +328,7 @@ export class WAMonitoringService {
             token: instanceData.token,
             number: instanceData.number,
             businessId: instanceData.businessId,
+            connectionStatus: instanceData.connectionStatus as any, // Pass connection status
           };
 
           this.setInstance(instance);
@@ -315,6 +357,8 @@ export class WAMonitoringService {
           token: instance.token,
           number: instance.number,
           businessId: instance.businessId,
+          ownerJid: instance.ownerJid,
+          connectionStatus: instance.connectionStatus as any, // Pass connection status
         });
       }),
     );
@@ -339,6 +383,7 @@ export class WAMonitoringService {
           integration: instance.integration,
           token: instance.token,
           businessId: instance.businessId,
+          connectionStatus: instance.connectionStatus as any, // Pass connection status
         });
       }),
     );
@@ -348,6 +393,8 @@ export class WAMonitoringService {
     this.eventEmitter.on('remove.instance', async (instanceName: string) => {
       try {
         await this.waInstances[instanceName]?.sendDataWebhook(Events.REMOVE_INSTANCE, null);
+
+        this.clearDelInstanceTime(instanceName);
 
         this.cleaningUp(instanceName);
         this.cleaningStoreData(instanceName);
@@ -364,6 +411,8 @@ export class WAMonitoringService {
     this.eventEmitter.on('logout.instance', async (instanceName: string) => {
       try {
         await this.waInstances[instanceName]?.sendDataWebhook(Events.LOGOUT_INSTANCE, null);
+
+        this.clearDelInstanceTime(instanceName);
 
         if (this.configService.get<Chatwoot>('CHATWOOT').ENABLED) {
           this.waInstances[instanceName]?.clearCacheChatwoot();

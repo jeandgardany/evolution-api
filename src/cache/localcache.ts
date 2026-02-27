@@ -9,7 +9,10 @@ export class LocalCache implements ICache {
   private conf: CacheConfLocal;
   static localCache = new NodeCache();
 
-  constructor(private readonly configService: ConfigService, private readonly module: string) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly module: string,
+  ) {
     this.conf = this.configService.get<CacheConf>('CACHE')?.LOCAL;
   }
 
@@ -50,7 +53,7 @@ export class LocalCache implements ICache {
 
   async hGet(key: string, field: string) {
     try {
-      const data = LocalCache.localCache.get(this.buildKey(key)) as Object;
+      const data = LocalCache.localCache.get(this.buildKey(key)) as object;
 
       if (data && field in data) {
         return JSON.parse(data[field], BufferJSON.reviver);
@@ -81,7 +84,7 @@ export class LocalCache implements ICache {
 
   async hDelete(key: string, field: string) {
     try {
-      const data = LocalCache.localCache.get(this.buildKey(key)) as Object;
+      const data = LocalCache.localCache.get(this.buildKey(key)) as object;
 
       if (data && field in data) {
         delete data[field];

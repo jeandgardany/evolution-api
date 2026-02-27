@@ -1,21 +1,20 @@
 import { advancedOperatorsSearch } from './advancedOperatorsSearch';
 
-export const findBotByTrigger = async (
-  botRepository: any,
-  settingsRepository: any,
-  content: string,
-  instanceId: string,
-) => {
-  // Check for triggerType 'all'
-  const findTriggerAll = await botRepository.findFirst({
+export const findBotByTrigger = async (botRepository: any, content: string, instanceId: string) => {
+  // Check for triggerType 'all' or 'none' (both should match any message)
+  const findTriggerAllOrNone = await botRepository.findFirst({
     where: {
       enabled: true,
-      triggerType: 'all',
+      triggerType: {
+        in: ['all', 'none'],
+      },
       instanceId: instanceId,
     },
   });
 
-  if (findTriggerAll) return findTriggerAll;
+  if (findTriggerAllOrNone) {
+    return findTriggerAllOrNone;
+  }
 
   const findTriggerAdvanced = await botRepository.findMany({
     where: {
@@ -41,7 +40,9 @@ export const findBotByTrigger = async (
     },
   });
 
-  if (findTriggerEquals) return findTriggerEquals;
+  if (findTriggerEquals) {
+    return findTriggerEquals;
+  }
 
   // Check for regex match
   const findRegex = await botRepository.findMany({

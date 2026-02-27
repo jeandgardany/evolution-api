@@ -120,7 +120,12 @@ export class PusherController extends EventController implements EventController
     sender,
     apiKey,
     local,
+    integration,
+    extra,
   }: EmitData): Promise<void> {
+    if (integration && !integration.includes('pusher')) {
+      return;
+    }
     if (!this.status) {
       return;
     }
@@ -129,6 +134,7 @@ export class PusherController extends EventController implements EventController
     const enabledLog = configService.get<Log>('LOG').LEVEL.includes('WEBHOOKS');
     const eventName = event.replace(/_/g, '.').toLowerCase();
     const pusherData = {
+      ...(extra ?? {}),
       event,
       instance: instanceName,
       data,
