@@ -1,0 +1,60 @@
+name: Publish Docker image (GHCR)
+
+# Publishes ghcr.io/<owner>/evolution-api when a version tag is pushed (e.g. 2.3.7-braia.1)
+# or when started by hand from the Actions tab.
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/evolution-api
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            type=sha,prefix=sha-
+          labels: |
+            org.opencontainers.image.title=evolution-api
+            org.opencontainers.image.description=Self-maintained fork of Evolution API
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
+      - name: Build and push (linux/amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
